@@ -6,7 +6,9 @@
 
 ## News 🔔 🔔 🔔 
 
-- 🔥 [04 June, 2025] We found the fantastic performance of TIES-Merging on shortening the output length of DeepSeek-R1-0528-Qwen3-8B.
+- [October, 2025] Our recent model merging work [Activation-Guided Consensus Merging for Large Language Models](https://arxiv.org/abs/2505.14009) has been accepted by NeurIPS 2025.
+- [October, 2025] The codebase of Sens-Merging has been updated.
+- [04 June, 2025] We found the fantastic performance of TIES-Merging on shortening the output length of DeepSeek-R1-0528-Qwen3-8B.
 > [!IMPORTANT]
 > **Reducing around 50% length with performance improvement 4 points on AIME24! AND preserving the no_think ability!**
 - 💡 [27 March, 2025] We release the code of Average Merging, Task Arithmetic, Ties-Merging and DARE. Special thanks to [MergeLM](https://github.com/yule-BUAA/MergeLM) for their great work. We use this repo as our codebase.
