@@ -57,6 +57,78 @@ class MergingMethod:
 
         return averaged_params
 
+    def ema_merging(self, models_to_merge: list, exclude_param_names_regex: list, beta: float = 0.9):
+        """
+        EMA (Exponential Moving Average) merging method.
+        Sequentially merges models using the formula: result = old * beta + new * (1 - beta)
+        
+        For efficiency, this implementation computes the final weights for each model directly:
+        - For n models [M_0, M_1, ..., M_{n-1}]:
+          - M_0 weight: beta^(n-1)
+          - M_i (i=1,...,n-2) weight: beta^(n-1-i) * (1-beta)
+          - M_{n-1} weight: (1-beta)
+        
+        :param models_to_merge: list, individual models that need to be merged (in order)
+        :param exclude_param_names_regex: list, regular expression of names of parameters that need to be excluded
+        :param beta: float, EMA decay factor, controls how much weight is given to earlier models.
+                     Higher beta means more weight on earlier models. Default is 0.9.
+        :return: dict, merged parameters
+        """
+        n = len(models_to_merge)
+        if n == 0:
+            return {}
+        if n == 1:
+            # only one model, return its parameters directly
+            param_dict = {param_name: param_value.clone() for param_name, param_value in models_to_merge[0].named_parameters()}
+            param_names_to_merge = get_param_names_to_merge(input_param_names=list(param_dict.keys()),
+                                                            exclude_param_names_regex=exclude_param_names_regex)
+            return {name: param_dict[name] for name in param_names_to_merge}
+
+        # Compute the EMA weights for each model
+        # For n models, applying EMA sequentially gives:
+        # - M_0: beta^(n-1)
+        # - M_i (1 <= i <= n-2): beta^(n-1-i) * (1 - beta)
+        # - M_{n-1}: (1 - beta)
+        ema_weights = []
+        for i in range(n):
+            if i == 0:
+                # First model: weight = beta^(n-1)
+                weight = beta ** (n - 1)
+            elif i == n - 1:
+                # Last model: weight = (1 - beta)
+                weight = 1 - beta
+            else:
+                # Middle models: weight = beta^(n-1-i) * (1 - beta)
+                weight = (beta ** (n - 1 - i)) * (1 - beta)
+            ema_weights.append(weight)
+
+        # dictionary of list, where key is the parameter name,
+        # value is a list of the corresponding parameters of all the models that need to be merged
+        models_to_merge_param_dict = defaultdict(list)
+        # iterate each individual model that needs to be merged
+        for model_to_merge in models_to_merge:
+            param_dict = {param_name: param_value for param_name, param_value in model_to_merge.named_parameters()}
+            # exclude parameter whose name matches element in exclude_param_names_regex
+            param_names_to_merge = get_param_names_to_merge(input_param_names=list(param_dict.keys()),
+                                                            exclude_param_names_regex=exclude_param_names_regex)
+            for param_name in param_names_to_merge:
+                models_to_merge_param_dict[param_name].append(param_dict[param_name])
+
+        with torch.no_grad():
+            # EMA weighted merging of individual models' parameters
+            ema_weights_tensor = torch.tensor(ema_weights, dtype=torch.float32)
+            merged_params = {}
+            for param_name, model_to_merge_param in models_to_merge_param_dict.items():
+                # Stack parameters: shape (n, *param_shape)
+                stacked_params = torch.stack(model_to_merge_param, dim=0)
+                # Reshape weights for broadcasting: (n, 1, 1, ...) to match param dimensions
+                weight_shape = [n] + [1] * (stacked_params.dim() - 1)
+                weights = ema_weights_tensor.view(*weight_shape).to(stacked_params.device, dtype=stacked_params.dtype)
+                # Weighted sum
+                merged_params[param_name] = (stacked_params * weights).sum(dim=0)
+
+        return merged_params
+
     def task_arithmetic(self, merged_model: nn.Module, models_to_merge: list, exclude_param_names_regex: list,
                         scaling_coefficient: float = 1.0):
         """
@@ -313,7 +385,8 @@ class MergingMethod:
                        param_value_mask_rate: float = 0.8,
                        weight_format: str = "delta_weight", weight_mask_rates: list = None,
                        use_weight_rescale: bool = True, mask_strategy: str = "random",
-                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False):
+                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False,
+                       ema_beta: float = 0.9):
         """
         model merging methods
         :param merged_model: nn.Module, the merged model
@@ -327,11 +400,16 @@ class MergingMethod:
         :param mask_strategy: str, mask strategy, can be "random" and "magnitude"
         :param mask_apply_method: str, merging method that the mask strategy applies
         :param models_use_deepcopy: boolean, whether to deepcopy the models
+        :param ema_beta: float, EMA decay factor for ema_merging method. Default is 0.9.
         :return:
         """
         if self.merging_method_name == "average_merging":
             merged_params = self.average_merging(models_to_merge=models_to_merge,
                                                  exclude_param_names_regex=exclude_param_names_regex)
+        elif self.merging_method_name == "ema_merging":
+            merged_params = self.ema_merging(models_to_merge=models_to_merge,
+                                             exclude_param_names_regex=exclude_param_names_regex,
+                                             beta=ema_beta)
         elif self.merging_method_name == "task_arithmetic":
             merged_params = self.task_arithmetic(merged_model=merged_model, models_to_merge=models_to_merge,
                                                  exclude_param_names_regex=exclude_param_names_regex,
@@ -390,7 +468,8 @@ class MergingMethod:
                          param_value_mask_rate: float = 0.8,
                          weight_format: str = "delta_weight", weight_mask_rates: list = None,
                          use_weight_rescale: bool = True, mask_strategy: str = "random",
-                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False):
+                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False,
+                         ema_beta: float = 0.9):
         """
         merge the parameters of models_to_merge to merged_model
         :param merged_model: nn.Module, the merged model
@@ -404,6 +483,7 @@ class MergingMethod:
         :param mask_strategy: str, mask strategy, can be "random" and "magnitude"
         :param mask_apply_method: str, merging method that the mask strategy applies
         :param models_use_deepcopy: boolean, whether to deepcopy the models
+        :param ema_beta: float, EMA decay factor for ema_merging method. Default is 0.9.
         :return:
         """
         # merged_params, dict of parameters
@@ -414,7 +494,8 @@ class MergingMethod:
                                             weight_format=weight_format, weight_mask_rates=weight_mask_rates,
                                             use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy,
                                             mask_apply_method=mask_apply_method,
-                                            models_use_deepcopy=models_use_deepcopy)
+                                            models_use_deepcopy=models_use_deepcopy,
+                                            ema_beta=ema_beta)
         self.copy_params_to_model(params=merged_params, model=merged_model)
 
         return merged_model
