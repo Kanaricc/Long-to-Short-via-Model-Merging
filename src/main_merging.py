@@ -35,7 +35,8 @@ def main():
         param_value_mask_rate=args.param_value_mask_rate,
         scaling_coefficient=args.scaling_coefficient,
         mask_apply_method=args.mask_apply_method,
-        weight_mask_rates=weight_mask_rates
+        weight_mask_rates=weight_mask_rates,
+        ema_beta=args.ema_beta
     )
     print(f"Saving model to {args.output_dir}")
     if not os.path.exists(args.output_dir):
@@ -58,5 +59,6 @@ if __name__ == '__main__':
     arg_parser.add_argument("--use_gpu", action='store_true', default=False)
     arg_parser.add_argument("--mask_apply_method", type=str, default="average_merging")
     arg_parser.add_argument("--weight_mask_rates", type=str, default=None)
+    arg_parser.add_argument("--ema_beta", type=float, default=0.9, help="EMA decay factor for ema_merging method")
     args = arg_parser.parse_args()
     main()
