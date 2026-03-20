@@ -2,7 +2,7 @@ import argparse
 import os
 
 import torch
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, Qwen3_5ForConditionalGeneration, AutoTokenizer
 from merging_methods import MergingMethod
 
 
@@ -13,11 +13,11 @@ def main():
     print(f"Scaling coefficient is {args.scaling_coefficient}")
     device = "cuda" if args.use_gpu else "cpu"
     print(f"Merging conducted on {device}")
-    base_model = AutoModel.from_pretrained(args.base_model).to(device)
+    base_model = Qwen3_5ForConditionalGeneration.from_pretrained(args.base_model, torch_dtype=torch.bfloat16).to(device)
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     candidate_models = []
     for model_to_merge in models_to_merge:
-        candidate_models.append(AutoModel.from_pretrained(model_to_merge).to(device))
+        candidate_models.append(Qwen3_5ForConditionalGeneration.from_pretrained(model_to_merge, torch_dtype=torch.bfloat16).to(device))
     merging_engine = MergingMethod(merging_method_name=args.merge_method)
     if args.weight_mask_rates is not None:
         weight_mask_rates = args.weight_mask_rates.split(",")
@@ -42,7 +42,7 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir, exist_ok=True)
 
-    merged_model = merged_model
+    merged_model = merged_model.to(torch.bfloat16)
     merged_model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
 
